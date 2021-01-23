@@ -436,7 +436,39 @@ void _handleSW( struct swMsg *m, struct fifosHandle *f )
     }
     else
     {
-        if ( ( m->srcAddr < NUM_CHANNELS ) && ( f->c[m->srcAddr].handle ) )
+        char outputString[MAX_STRING_LENGTH];
+
+        if ( m->srcAddr == 1 ) // trace: func enter packet #1
+        {
+           int opLen = snprintf( outputString, MAX_STRING_LENGTH, "f,1,%x" EOL, m->value);
+           write( f->c[HW_CHANNEL].handle, outputString, opLen );
+        }
+        else if ( m->srcAddr == 2 ) // trace: func enter packet #2
+        {
+           int opLen = snprintf( outputString, MAX_STRING_LENGTH, "f,2,%x" EOL, m->value);
+           write( f->c[HW_CHANNEL].handle, outputString, opLen );
+        }
+        else if ( m->srcAddr == 3 ) // trace: func exit packet #1
+        {
+           int opLen = snprintf( outputString, MAX_STRING_LENGTH, "f,3,%x" EOL, m->value);
+           write( f->c[HW_CHANNEL].handle, outputString, opLen );
+        }
+        else if ( m->srcAddr == 4 ) // trace: func exit packet #2
+        {
+           int opLen = snprintf( outputString, MAX_STRING_LENGTH, "f,4,%x" EOL, m->value);
+           write( f->c[HW_CHANNEL].handle, outputString, opLen );
+        }
+        else if ( m->srcAddr == 5 ) // trace: msg send
+        {
+           int opLen = snprintf( outputString, MAX_STRING_LENGTH, "m,1,%x" EOL, m->value );
+           write( f->c[HW_CHANNEL].handle, outputString, opLen );
+        }
+        else if ( m->srcAddr == 6 ) // trace: msg receive
+        {
+           int opLen = snprintf( outputString, MAX_STRING_LENGTH, "m,2,%x" EOL, m->value );
+           write( f->c[HW_CHANNEL].handle, outputString, opLen );
+        }
+        else if ( ( m->srcAddr < NUM_CHANNELS ) && ( f->c[m->srcAddr].handle ) ) 
         {
             write( f->c[m->srcAddr].handle, m, sizeof( struct msg ) );
         }
