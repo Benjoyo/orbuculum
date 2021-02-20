@@ -1,6 +1,8 @@
 /*
- * SWO Catter for Blackmagic Probe and TTL Serial Interfaces
+ * SWO Trace Feeder by Bennet Krause
  * =========================================================
+ *
+ * Based on orbcat.c by: 
  *
  * Copyright (C) 2017, 2019  Dave Marples  <dave@marples.net>
  * All rights reserved.
@@ -85,6 +87,8 @@ struct
     bool forceITMSync;
     uint32_t hwOutputs;
 
+    bool logOutput;
+
     /* Sink information */
     char *presFormat[NUM_CHANNELS + 1];
 
@@ -94,7 +98,7 @@ struct
 
     char *file;                                          /* File host connection */
     bool fileTerminate;                                  /* Terminate when file read isn't successful */
-} options = {.hwOutputs = 1, .forceITMSync = true, .tpiuITMChannel = 1, .port = SERVER_PORT, .server = "localhost"};
+} options = {.logOutput = false, .hwOutputs = 0xFFFF, .forceITMSync = true, .tpiuITMChannel = 1, .port = SERVER_PORT, .server = "localhost"};
 
 struct
 {
@@ -164,12 +168,20 @@ void _handlePCSample( struct pcSampleMsg *m, struct ITMDecoder *i )
     fprintf( stdout, "%d,0x%08x" EOL, HWEVENT_PCSample, m->pc );
 }
 // ====================================================================================================
+/* 
+ * DWT memory read/write events are handled here. This function was modified to reduce the footprint of the output.
+ */
 void _handleDataRWWP( struct watchMsg *m, struct ITMDecoder *i )
 
 {
     assert( m->msgtype == MSG_DATA_RWWP );
 
-    fprintf( stdout, "%d,%d,%s,0x%x" EOL, HWEVENT_RWWT, m->comp, m->isWrite ? "Write" : "Read", m->data );
+    if ( !( options.hwOutputs & ( 1 << HWEVENT_RWWT ) ) )
+    {
+        return;
+    }
+
+    fprintf( stdout, "d,%d,%s,%x" EOL, m->comp, m->isWrite ? "w" : "r", m->data ); // "d" for data
 }
 // ====================================================================================================
 void _handleDataAccessWP( struct wptMsg *m, struct ITMDecoder *i )
@@ -199,37 +211,48 @@ void _handleDataOffsetWP(  struct oswMsg *m, struct ITMDecoder *i )
     fprintf( stdout, "%d,%d,0x%04x" EOL, HWEVENT_OFS, m->comp, m->offset );
 }
 // ====================================================================================================
+/* 
+ * DWT memory read/write events are handled here. This function was modified to reduce the footprint of the output.
+ */
 void _handleSW( struct swMsg *m, struct ITMDecoder *i )
 
 {
     assert( m->msgtype == MSG_SOFTWARE );
 
-    if ( ( m->srcAddr < NUM_CHANNELS ) && ( options.presFormat[m->srcAddr] ) )
+    if ( options.logOutput ) 
     {
-        // formatted output....start with specials
-        if ( strstr( options.presFormat[m->srcAddr], "%f" ) )
+        if ( m->srcAddr == 10 ) // trace: log message
         {
-            /* type punning on same host, after correctly building 32bit val
-             * only unsafe on systems where u32/float have diff byte order */
-            float *nastycast = ( float * )&m->value;
-            fprintf( stdout, options.presFormat[m->srcAddr], *nastycast, *nastycast, *nastycast, *nastycast );
+            fprintf( stdout, "%c", m->value );
         }
-        else if ( strstr( options.presFormat[m->srcAddr], "%c" ) )
-        {
-            /* Format contains %c, so execute repeatedly for all characters in sent data */
-            uint8_t op[4] = {m->value & 0xff, ( m->value >> 8 ) & 0xff, ( m->value >> 16 ) & 0xff, ( m->value >> 24 ) & 0xff};
-            uint32_t l = 0;
 
-            do
-            {
-                fprintf( stdout, options.presFormat[m->srcAddr], op[l], op[l], op[l] );
-            }
-            while ( ++l < m->len );
-        }
-        else
-        {
-            fprintf( stdout, options.presFormat[m->srcAddr], m->value, m->value, m->value, m->value );
-        }
+        // only output log messages, for normal trace a second instance should be started without -l option
+        return;
+    }
+
+    if ( m->srcAddr == 1 ) // trace: func enter packet #1
+    {
+        fprintf( stdout, "f,1,%x" EOL, m->value);
+    }
+    else if ( m->srcAddr == 2 ) // trace: func enter packet #2
+    {
+        fprintf( stdout, "f,2,%x" EOL, m->value);
+    }
+    else if ( m->srcAddr == 3 ) // trace: func exit packet #1
+    {
+        fprintf( stdout, "f,3,%x" EOL, m->value);
+    }
+    else if ( m->srcAddr == 4 ) // trace: func exit packet #2
+    {
+        fprintf( stdout, "f,4,%x" EOL, m->value);
+    }
+    else if ( m->srcAddr == 5 ) // trace: msg send
+    {
+        fprintf( stdout, "m,1,%x" EOL, m->value );
+    }
+    else if ( m->srcAddr == 6 ) // trace: msg receive
+    {
+        fprintf( stdout, "m,2,%x" EOL, m->value );
     }
 }
 // ====================================================================================================
@@ -287,7 +310,8 @@ void _itmPumpProcess( char c )
             break;
 
         case ITM_EV_OVERFLOW:
-            genericsReport( V_WARN, "ITM Overflow" EOL );
+            //genericsReport( V_WARN, "ITM Overflow" EOL );
+	    fprintf( stdout, "ITM_OVERFLOW" EOL );
             break;
 
         case ITM_EV_ERROR:
@@ -374,7 +398,7 @@ void _printHelp( char *progName )
 
 {
     fprintf( stdout, "Usage: %s <htv> <-i channel> <-p port> <-s server>" EOL, progName );
-    fprintf( stdout, "       c: <Number>,<Format> of channel to add into output stream (repeat per channel)" EOL );
+    fprintf( stdout, "       l: log message output stream (otherwise trace output)" EOL );
     fprintf( stdout, "       e: When reading from file, terminate at end of file rather than waiting for further input" EOL );
     fprintf( stdout, "       f: <filename> Take input from specified file" EOL );
     fprintf( stdout, "       h: This help" EOL );
@@ -389,12 +413,10 @@ int _processOptions( int argc, char *argv[] )
 
 {
     int c;
-    char *chanConfig;
-    uint chan;
-    char *chanIndex;
+    
 #define DELIMITER ','
 
-    while ( ( c = getopt ( argc, argv, "c:ef:hi:ns:tv:" ) ) != -1 )
+    while ( ( c = getopt ( argc, argv, "c:ef:hi:ns:tv:l" ) ) != -1 )
         switch ( c )
         {
             // ------------------------------------
@@ -458,31 +480,9 @@ int _processOptions( int argc, char *argv[] )
                 break;
 
             // ------------------------------------
-            /* Individual channel setup */
-            case 'c':
-                chanIndex = chanConfig = strdup( optarg );
-                chan = atoi( optarg );
-
-                if ( chan >= NUM_CHANNELS )
-                {
-                    genericsReport( V_ERROR, "Channel index out of range" EOL );
-                    return false;
-                }
-
-                /* Scan for format */
-                while ( ( *chanIndex ) && ( *chanIndex != DELIMITER ) )
-                {
-                    chanIndex++;
-                }
-
-                if ( !*chanIndex )
-                {
-                    genericsReport( V_ERROR, "No output format for channel %d" EOL, chan );
-                    return false;
-                }
-
-                *chanIndex++ = 0;
-                options.presFormat[chan] = strdup( genericsUnescape( chanIndex ) );
+            case 'l':
+                options.logOutput = true;
+		options.hwOutputs = 0;
                 break;
 
             // ------------------------------------
@@ -510,7 +510,7 @@ int _processOptions( int argc, char *argv[] )
         return false;
     }
 
-    genericsReport( V_INFO, "orbcat V" VERSION " (Git %08X %s, Built " BUILD_DATE EOL, GIT_HASH, ( GIT_DIRTY ? "Dirty" : "Clean" ) );
+    genericsReport( V_INFO, "trace V" VERSION " (Git %08X %s, Built " BUILD_DATE EOL, GIT_HASH, ( GIT_DIRTY ? "Dirty" : "Clean" ) );
 
     genericsReport( V_INFO, "Server     : %s:%d" EOL, options.server, options.port );
     genericsReport( V_INFO, "ForceSync  : %s" EOL, options.forceITMSync ? "true" : "false" );
@@ -537,16 +537,6 @@ int _processOptions( int argc, char *argv[] )
     else
     {
         genericsReport( V_INFO, "Using TPIU : false" EOL );
-    }
-
-    genericsReport( V_INFO, "Channels   :" EOL );
-
-    for ( int g = 0; g < NUM_CHANNELS; g++ )
-    {
-        if ( options.presFormat[g] )
-        {
-            genericsReport( V_INFO, "             %02d [%s]" EOL, g, genericsEscape( options.presFormat[g] ) );
-        }
     }
 
     return true;

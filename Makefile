@@ -19,6 +19,8 @@ ORBTOP = orbtop
 ORBDUMP = orbdump
 ORBSTAT = orbstat
 
+TRACE = trace
+
 ##########################################################################
 # Check Host OS
 ##########################################################################
@@ -104,10 +106,12 @@ endif
 ifeq ($(WITH_NWCLIENT),1)
 ORBUCULUM_CFILES += $(App_DIR)/nwclient.c
 endif
-ORBCAT_CFILES = $(App_DIR)/$(ORBCAT).c 
+ORBCAT_CFILES = $(App_DIR)/$(ORBCAT).c
 ORBTOP_CFILES = $(App_DIR)/$(ORBTOP).c $(App_DIR)/symbols.c $(EXT)/cJSON.c
 ORBDUMP_CFILES = $(App_DIR)/$(ORBDUMP).c
 ORBSTAT_CFILES = $(App_DIR)/$(ORBSTAT).c $(App_DIR)/symbols.c
+
+TRACE_CFILES = $(App_DIR)/$(TRACE).c 
 
 # FPGA Files
 # ==========
@@ -191,6 +195,10 @@ ORBSTAT_OBJS =  $(OBJS) $(patsubst %.c,%.o,$(ORBSTAT_CFILES))
 ORBSTAT_POBJS = $(POJBS) $(patsubst %,$(OLOC)/%,$(ORBSTAT_OBJS))
 ORBSTAT_PDEPS = $(PDEPS) $(ORBSTAT_POBJS:.o=.d)
 
+TRACE_OBJS =  $(OBJS) $(patsubst %.c,%.o,$(TRACE_CFILES))
+TRACE_POBJS = $(POJBS) $(patsubst %,$(OLOC)/%,$(TRACE_OBJS))
+TRACE_PDEPS = $(PDEPS) $(TRACE_POBJS:.o=.d)
+
 CFILES += $(App_DIR)/generics.c
 
 ##########################################################################
@@ -208,7 +216,7 @@ $(OLOC)/%.o : %.c
 	$(call cmd, \$(CC) -c $(CFLAGS) -MMD -o $@ $< ,\
 	Compiling $<)
 
-build: $(ORBUCULUM) $(ORBCAT) $(ORBTOP) $(ORBDUMP) $(ORBSTAT)
+build: $(ORBUCULUM) $(ORBCAT) $(ORBTOP) $(ORBDUMP) $(ORBSTAT) $(TRACE)
 
 $(ORBLIB) : get_version $(ORBLIB_POBJS)
 	$(Q)$(AR) rcs $(OLOC)/lib$(ORBLIB).a  $(ORBLIB_POBJS)
@@ -234,11 +242,15 @@ $(ORBSTAT) : $(ORBLIB) $(ORBSTAT_POBJS)
 	$(Q)$(LD) $(LDFLAGS) -o $(OLOC)/$(ORBSTAT) $(MAP) $(ORBSTAT_POBJS) $(LDLIBS)
 	-@echo "Completed build of" $(ORBSTAT)
 
+$(TRACE) : $(ORBLIB) $(TRACE_POBJS)
+	$(Q)$(LD) $(LDFLAGS) -o $(OLOC)/$(TRACE) $(MAP) $(TRACE_POBJS) $(LDLIBS)
+	-@echo "Completed build of" $(TRACE)
+
 tags:
 	-@etags $(CFILES) 2> /dev/null
 
 clean:
-	-$(call cmd, \rm -f $(POBJS) $(LD_TEMP) $(ORBUCULUM) $(ORBCAT) $(ORBDUMP) $(ORBSTAT) $(OUTFILE).map $(EXPORT) ,\
+	-$(call cmd, \rm -f $(POBJS) $(LD_TEMP) $(ORBUCULUM) $(ORBCAT) $(ORBDUMP) $(ORBSTAT) $(TRACE) $(OUTFILE).map $(EXPORT) ,\
 	Cleaning )
 	$(Q)-rm -rf SourceDoc/*
 	$(Q)-rm -rf *~ core
